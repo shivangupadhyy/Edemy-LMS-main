@@ -9,7 +9,9 @@ export const AppContext = createContext()
 
 export const AppContextProvider = (props)=>{
 
-    const backendUrl = import.meta.env.VITE_BACKEND_URL;
+    // Backend URL (set in `client/.env` as `VITE_BACKEND_URL`).
+    // Fallback to localhost so dev works when the env var is missing.
+    const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3000';
 
     const currency = import.meta.env.VITE_CURRENCY;
     const navigate = useNavigate();
@@ -41,61 +43,86 @@ export const AppContextProvider = (props)=>{
 
     // fetch user data
     const fetchUserData = async ()=>{
-
-        if(user.publicMetadata.role === 'educator'){
+        // Guard access to user metadata
+        if (user && user.publicMetadata && user.publicMetadata.role === 'educator') {
             setIsEducator(true);
         }
 
         try {
             const token = await getToken();
-
-            const {data} = await axios.get(backendUrl + '/api/user/data' , {headers: {Authorization: `Bearer ${token}`}})
-        
-            if(data.success){
-                setUserData(data.user)
-            }else{
-                toast.error(data.message)
+            if (!token) {
+                console.warn('No auth token available from Clerk. Skipping fetchUserData.');
+                return;
             }
 
+            // Debugging: log the request target and token presence (do NOT log token to prod)
+            // console.debug('Fetching user data from', backendUrl + '/api/user/data');
+
+            const response = await axios.get(backendUrl + '/api/user/data', {
+                headers: { Authorization: `Bearer ${token}` },
+            });
+
+            if (response?.data?.success) {
+                setUserData(response.data.user);
+            } else {
+                console.error('fetchUserData error response:', response?.data);
+                // Don't toast if it's just a 404 or user creation is in progress
+                if (response?.status !== 404) {
+                    toast.error(response?.data?.message || 'Failed to fetch user data');
+                }
+            }
         } catch (error) {
-            toast.error(error.message)
+            console.error('fetchUserData caught error:', error?.response?.status, error?.response?.data || error.message);
+            // 404 may mean user is being created by webhook, so only toast on other errors
+            if (error?.response?.status !== 404) {
+                toast.error(error?.response?.data?.message || error.message || 'Network error while fetching user data');
+            }
         }
     }
 
     // Function to calculate average rating of course
     const calculateRating = (course) => {
-        if(course.courseRatings.length === 0){
+        if (!course || !Array.isArray(course.courseRatings) || course.courseRatings.length === 0) {
             return 0;
         }
         let totalRating = 0;
-        course.courseRatings.forEach(rating =>{
-            totalRating += rating.rating;
-        })
-        return Math.floor(totalRating / course.courseRatings.length)
+        course.courseRatings.forEach((rating) => {
+            totalRating += rating?.rating || 0;
+        });
+        return Math.floor(totalRating / course.courseRatings.length);
     }
 
     // function to calculate course chapter time
     const calculateChapterTime = (chapter) => {
+        if (!chapter || !Array.isArray(chapter.chapterContent)) return "0 m";
         let time = 0;
-        chapter.chapterContent.map((lecture) => time += lecture.lectureDuration)
-        return humanizeDuration(time * 60 * 1000, {units: ["h", "m"]})
+        chapter.chapterContent.forEach((lecture) => {
+            time += lecture?.lectureDuration || 0;
+        });
+        return humanizeDuration(time * 60 * 1000, { units: ["h", "m"] });
     }
 
     // Function to calculate course Duratuion
     const calculateCourseDuration = (course)=>{
-        let time = 0 ;
-        course.courseContent.map((chapter)=> chapter.chapterContent.map(
-            (lecture)=> time += lecture.lectureDuration 
-        ))
+        if (!course || !Array.isArray(course.courseContent)) return "0 m";
+        let time = 0;
+        course.courseContent.forEach((chapter) => {
+            if (Array.isArray(chapter.chapterContent)) {
+                chapter.chapterContent.forEach((lecture) => {
+                    time += lecture?.lectureDuration || 0;
+                });
+            }
+        });
 
-        return humanizeDuration(time * 60 * 1000, {units: ["h", "m"]}) 
+        return humanizeDuration(time * 60 * 1000, { units: ["h", "m"] });
     }
 
     // Function to calculate to no. of lectures in the course
     const calculateNoOfLectures = (course) => {
+        if (!course || !Array.isArray(course.courseContent)) return 0;
         let totalLectures = 0;
-        course.courseContent.forEach(chapter => {
-            if(Array.isArray(chapter.chapterContent)){
+        course.courseContent.forEach((chapter) => {
+            if (Array.isArray(chapter.chapterContent)) {
                 totalLectures += chapter.chapterContent.length;
             }
         });
