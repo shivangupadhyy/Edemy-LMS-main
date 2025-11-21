@@ -222,10 +222,12 @@ export const stripeWebhooks = async (request, response) => {
             }
 
             // Add user to enrolled students
+            courseData.enrolledStudents = courseData.enrolledStudents || [];
             courseData.enrolledStudents.push(userData._id);
             await courseData.save();
 
-            // Add course to user's enrolled courses
+            // Add course to user's enrolled courses (guard if array missing)
+            userData.enrolledCourses = userData.enrolledCourses || [];
             userData.enrolledCourses.push(courseData._id);
             await userData.save();
 

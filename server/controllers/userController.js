@@ -3,19 +3,47 @@ import Course from "../models/Course.js"
 import { Purchase } from "../models/Purchase.js"
 import User from "../models/User.js"
 import { CourseProgress } from "../models/CourseProgress.js"
+import { clerkClient } from "@clerk/clerk-sdk-node"
 
 // Get users data
 export const getUserData = async(req,res)=>{
     try {
-        const userId = req.auth.userId
-        const user = await User.findById(userId)
-        if(!user){
-            res.json({success: false, message:"User not found!"})
+        const userId = req.auth.userId;
+        
+        let dbUser = await User.findById(userId);
+
+        // If user not found in DB, fetch from Clerk and create record
+        if(!dbUser){
+            console.log('User not found in DB, fetching from Clerk:', userId);
+            try {
+                // Fetch user from Clerk API
+                const clerkUser = await clerkClient.users.getUser(userId);
+                console.log('Fetched Clerk user:', clerkUser);
+                
+                const userEmail = clerkUser.emailAddresses?.[0]?.emailAddress || 'no-email@example.com';
+                const userName = `${clerkUser.firstName || ''} ${clerkUser.lastName || ''}`.trim() || clerkUser.username || 'User';
+                const userImageUrl = clerkUser.imageUrl || 'https://via.placeholder.com/150';
+
+                console.log('Creating user with:', { userId, userEmail, userName, userImageUrl });
+
+                dbUser = await User.create({
+                    _id: userId,
+                    email: userEmail,
+                    name: userName,
+                    imageUrl: userImageUrl,
+                    enrolledCourses: []
+                });
+                console.log('User created successfully:', userId);
+            } catch (createErr) {
+                console.error('Failed to create user from Clerk:', createErr.message);
+                return res.status(500).json({success: false, message: `Failed to create user: ${createErr.message}`});
+            }
         }
 
-        res.json({success: true, user});
+        return res.json({success: true, user: dbUser});
     } catch (error) {
-        res.json({success: false, message:error.message})
+        console.error('getUserData error:', error);
+        return res.status(500).json({success: false, message: error.message});
     }
 }
 
@@ -26,7 +54,12 @@ export const userEnrolledCourses = async (req,res)=>{
         const userId = req.auth.userId
         const userData = await User.findById(userId).populate('enrolledCourses')
 
-        res.json({success:true, enrolledCourses: userData.enrolledCourses})
+        // If user not found, return an empty list instead of crashing.
+        if(!userData){
+            return res.json({success: true, enrolledCourses: []})
+        }
+
+        return res.json({success:true, enrolledCourses: userData.enrolledCourses || []})
 
 
     } catch (error) {
@@ -48,7 +81,7 @@ export const purchaseCourse = async (req,res) => {
         const courseData = await Course.findById(courseId)
         if(!userData || !courseData)
         {
-            res.json({success: false, message: "Data Not Found"})
+            return res.status(404).json({success: false, message: "Data Not Found"})
         }
 
         const purchaseData = {
@@ -151,7 +184,7 @@ export const addUserRating = async (req,res)=>{
 
         if(!courseId || !userId || !rating || rating < 1 || rating > 5)
         {
-            res.json({success: false, message:"Invalid details"})
+            return res.status(400).json({success: false, message:"Invalid details"})
         }
 
         const course = await Course.findById(courseId)
